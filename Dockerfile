@@ -1,20 +1,25 @@
-FROM ubuntu:22.04
+FROM debian:12
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV REGION=ap
 
 RUN apt update && apt install -y \
     openssh-server \
     curl \
+    unzip \
     python3 \
     ca-certificates \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # install ngrok
-RUN curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
-    | tar xz -C / \
-    && chmod +x /ngrok
+RUN curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip -o ngrok.zip \
+    && unzip ngrok.zip \
+    && mv ngrok /ngrok \
+    && chmod +x /ngrok \
+    && rm ngrok.zip
 
-# create ssh runtime dir
+# ssh runtime dir
 RUN mkdir -p /run/sshd
 
 # create openssh.sh
@@ -23,7 +28,7 @@ RUN cat << 'EOF' > /openssh.sh
 set -e
 
 /ngrok tcp --authtoken "$NGROK_TOKEN" --region "$REGION" 22 &
-sleep 5
+sleep 6
 
 curl -s http://localhost:4040/api/tunnels | python3 - << 'PY'
 import json, sys
@@ -33,8 +38,11 @@ print("ssh root@" + t[6:].replace(":", " -p "))
 print("ROOT Password:craxid")
 PY
 
+# start sshd in background
 /usr/sbin/sshd
-exec python3 -m http.server "$PORT" --bind 0.0.0.0
+
+# fake HTTP server for Railway healthcheck
+exec nc -lk -p "$PORT" -e echo OK
 EOF
 
 RUN chmod +x /openssh.sh \
