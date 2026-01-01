@@ -1,19 +1,46 @@
-FROM debian
-ARG NGROK_TOKEN
-ARG REGION=ap
+FROM ubuntu:22.04
+
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && apt upgrade -y && apt install -y \
-    ssh wget unzip vim curl python3
-RUN wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip -O /ngrok-stable-linux-amd64.zip\
-    && cd / && unzip ngrok-stable-linux-amd64.zip \
-    && chmod +x ngrok
-RUN mkdir -p /run/sshd \
-    && echo "/ngrok tcp --authtoken ${NGROK_TOKEN} --region ${REGION} 22 &" >>/openssh.sh \
-    && echo "sleep 5" >> /openssh.sh \
-    && echo "curl -s http://localhost:4040/api/tunnels | python3 -c \"import sys, json; print(\\\"ssh info:\\\n\\\",\\\"ssh\\\",\\\"root@\\\"+json.load(sys.stdin)['tunnels'][0]['public_url'][6:].replace(':', ' -p '),\\\"\\\nROOT Password:craxid\\\")\" || echo \"\nError：NGROK_TOKEN，Ngrok Token\n\"" >> /openssh.sh \
-    && echo '/usr/sbin/sshd -D' >>/openssh.sh \
-    && echo 'PermitRootLogin yes' >>  /etc/ssh/sshd_config  \
-    && echo root:craxid|chpasswd \
-    && chmod 755 /openssh.sh
-EXPOSE 80 443 3306 4040 5432 5700 5701 5010 6800 6900 8080 8888 9000
-CMD /openssh.sh
+
+RUN apt update && apt install -y \
+    openssh-server \
+    curl \
+    python3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# install ngrok
+RUN curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+    | tar xz -C / \
+    && chmod +x /ngrok
+
+# create ssh runtime dir
+RUN mkdir -p /run/sshd
+
+# create openssh.sh
+RUN cat << 'EOF' > /openssh.sh
+#!/bin/sh
+set -e
+
+/ngrok tcp --authtoken "$NGROK_TOKEN" --region "$REGION" 22 &
+sleep 5
+
+curl -s http://localhost:4040/api/tunnels | python3 - << 'PY'
+import json, sys
+t = json.load(sys.stdin)["tunnels"][0]["public_url"]
+print("ssh info:")
+print("ssh root@" + t[6:].replace(":", " -p "))
+print("ROOT Password:craxid")
+PY
+
+/usr/sbin/sshd
+exec python3 -m http.server "$PORT" --bind 0.0.0.0
+EOF
+
+RUN chmod +x /openssh.sh \
+ && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
+ && echo root:craxid | chpasswd
+
+EXPOSE 22 8080
+
+CMD ["/openssh.sh"]
